@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Radio,
   Activity,
@@ -21,6 +21,8 @@ import {
   LayoutDashboard,
   Signal,
   RefreshCw,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 
 import { useLiveSocket } from "./hooks/useLiveSocket";
@@ -373,12 +375,21 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rawEvent, setRawEvent] = useState(null);
   const [clearBefore, setClearBefore] = useState(0);
+  const [speakingEventId, setSpeakingEventId] = useState(null);
 
   const username = getUsername(input);
 
   const connected = status?.status === "connected";
   const connecting =
     status?.status === "connecting" || status?.status === "reconnecting";
+
+  useEffect(() => {
+    return () => {
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   // ========================================
   // EVENTS
@@ -519,6 +530,33 @@ export default function App() {
     } catch (err) {
       console.error("Copy failed:", err);
     }
+  }
+
+  function speakChat(event) {
+    if (!("speechSynthesis" in window)) {
+      return;
+    }
+
+    if (speakingEventId === event.id) {
+      window.speechSynthesis.cancel();
+      setSpeakingEventId(null);
+      return;
+    }
+
+    const text = getEventDescription(event);
+    if (!text) return;
+
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "vi-VN";
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.onend = () => setSpeakingEventId(null);
+    utterance.onerror = () => setSpeakingEventId(null);
+
+    setSpeakingEventId(event.id);
+    window.speechSynthesis.speak(utterance);
   }
 
   // ========================================
@@ -928,6 +966,9 @@ export default function App() {
                   filteredEvents.map((event, index) => {
                     const style = getEventStyle(event.type);
                     const Icon = style.icon;
+                    const isChat =
+                      normalizeEventType(event.type) === "chat";
+                    const isSpeaking = speakingEventId === event.id;
 
                     return (
                       <div
@@ -970,6 +1011,29 @@ export default function App() {
                         >
                           <Code2 size={16} />
                         </button>
+
+                        {isChat && (
+                          <button
+                            onClick={() => speakChat(event)}
+                            title={isSpeaking ? "Stop speaking" : "Speak comment"}
+                            aria-label={
+                              isSpeaking
+                                ? "Stop speaking comment"
+                                : "Speak comment"
+                            }
+                            className={`shrink-0 rounded-lg p-2 transition sm:opacity-0 sm:group-hover:opacity-100 ${
+                              isSpeaking
+                                ? "bg-pink-500/10 text-pink-300"
+                                : "text-slate-600 hover:bg-pink-500/10 hover:text-pink-300"
+                            }`}
+                          >
+                            {isSpeaking ? (
+                              <VolumeX size={16} />
+                            ) : (
+                              <Volume2 size={16} />
+                            )}
+                          </button>
+                        )}
                       </div>
                     );
                   })
