@@ -25,7 +25,7 @@ afterEach(async () => {
   );
 });
 
-test("phân event vào file JSONL theo ngày và type", async () => {
+test("phân event vào file JSONL theo ngày, phiên và type", async () => {
   const store = await createStore();
   await store.startSession();
 
@@ -43,14 +43,14 @@ test("phân event vào file JSONL theo ngày và type", async () => {
   const chatPath = path.join(
     tempDirs[0],
     dateFolder,
-    "chat",
-    `${sessionTimestamp}.jsonl`,
+    `${sessionTimestamp}`,
+    "chat.jsonl",
   );
   const giftPath = path.join(
     tempDirs[0],
     dateFolder,
-    "gift",
-    `${sessionTimestamp}.jsonl`,
+    `${sessionTimestamp}`,
+    "gift.jsonl",
   );
 
   assert.deepEqual(
@@ -83,14 +83,22 @@ test("mỗi phiên dùng timestamp riêng và giữ lại file phiên trước",
 
   assert.notEqual(firstTimestamp, store.sessionTimestamp);
   const dateFolders = await fs.readdir(tempDirs[0]);
-  const chatFiles = [];
+  const sessionDirectories = [];
   for (const dateFolder of dateFolders) {
-    chatFiles.push(...(await fs.readdir(path.join(tempDirs[0], dateFolder, "chat"))));
+    sessionDirectories.push(
+      ...(await fs.readdir(path.join(tempDirs[0], dateFolder))),
+    );
   }
 
-  assert.equal(chatFiles.length, 2);
-  assert.ok(chatFiles.includes(`${firstTimestamp}.jsonl`));
-  assert.ok(chatFiles.includes(`${store.sessionTimestamp}.jsonl`));
+  assert.equal(sessionDirectories.length, 2);
+  assert.ok(sessionDirectories.includes(`${firstTimestamp}`));
+  assert.ok(sessionDirectories.includes(`${store.sessionTimestamp}`));
+  assert.deepEqual(
+    await fs.readdir(
+      path.join(tempDirs[0], dateFolders[0], `${firstTimestamp}`),
+    ),
+    ["chat.jsonl"],
+  );
 });
 
 test("sanitize type không cho phép thoát khỏi thư mục dữ liệu", async () => {
@@ -100,6 +108,10 @@ test("sanitize type không cho phép thoát khỏi thư mục dữ liệu", asyn
   await store.flush();
 
   const dateFolder = (await fs.readdir(tempDirs[0]))[0];
-  const eventFolders = await fs.readdir(path.join(tempDirs[0], dateFolder));
-  assert.deepEqual(eventFolders, ["_secret_type"]);
+  const sessionDirectory = path.join(
+    tempDirs[0],
+    dateFolder,
+    `${store.sessionTimestamp}`,
+  );
+  assert.deepEqual(await fs.readdir(sessionDirectory), ["_secret_type.jsonl"]);
 });

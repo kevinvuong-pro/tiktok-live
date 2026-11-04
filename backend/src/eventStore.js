@@ -51,12 +51,12 @@ class EventStore {
       timestamp = this.sessionTimestamp + 1;
     }
     let date = new Date(timestamp);
-    let filePath = this.getFilePath(date, "session");
+    let sessionDirectory = this.getSessionDirectory(date, timestamp);
 
-    while (await this.pathExists(filePath)) {
+    while (await this.pathExists(sessionDirectory)) {
       timestamp += 1;
       date = new Date(timestamp);
-      filePath = this.getFilePath(date, "session");
+      sessionDirectory = this.getSessionDirectory(date, timestamp);
     }
 
     this.sessionTimestamp = timestamp;
@@ -64,7 +64,7 @@ class EventStore {
     this.events = [];
     this.writeQueue = Promise.resolve();
 
-    await fs.mkdir(path.join(this.dataDir, this.sessionDate), {
+    await fs.mkdir(sessionDirectory, {
       recursive: true,
     });
 
@@ -78,7 +78,7 @@ class EventStore {
       }
 
       const eventType = normalizeEventType(event?.type);
-      const filePath = this.getFilePath(new Date(this.sessionTimestamp), eventType);
+      const filePath = this.getFilePath(eventType);
       const line = `${JSON.stringify(event)}\n`;
 
       this.events.push(event);
@@ -94,23 +94,23 @@ class EventStore {
     return this.writeQueue;
   }
 
-  getFilePath(date, eventType) {
-    const dateFolder = formatDate(date);
+  getSessionDirectory(date, timestamp = this.sessionTimestamp) {
     return path.join(
       this.dataDir,
-      dateFolder,
-      normalizeEventType(eventType),
-      `${this.sessionTimestamp ?? date.getTime()}.jsonl`,
+      formatDate(date),
+      String(timestamp),
+    );
+  }
+
+  getFilePath(eventType) {
+    return path.join(
+      this.getSessionDirectory(new Date(this.sessionTimestamp)),
+      `${normalizeEventType(eventType)}.jsonl`,
     );
   }
 
   getSessionPath() {
-    return path.join(
-      this.dataDir,
-      this.sessionDate,
-      "<event-type>",
-      `${this.sessionTimestamp}.jsonl`,
-    );
+    return path.join(this.getSessionDirectory(new Date(this.sessionTimestamp)), "<event-type>.jsonl");
   }
 
   async pathExists(filePath) {
