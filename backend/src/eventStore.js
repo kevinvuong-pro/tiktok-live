@@ -8,10 +8,26 @@ const defaultDataDir = path.resolve(
   "data",
 );
 
+function formatDate(date) {
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${day}-${month}-${date.getFullYear()}`;
+}
+
+function normalizeEventType(type) {
+  const value = String(type || "unknown")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^[^a-zA-Z0-9_-]+|[^a-zA-Z0-9_-]+$/g, "");
+
+  return value || "unknown";
+}
+
 class EventStore {
   constructor({ dataDir = defaultDataDir } = {}) {
     this.dataDir = dataDir;
-    this.filePath = null;
+    this.sessionTimestamp = null;
+    this.sessionDate = null;
     this.events = [];
     this.writeQueue = Promise.resolve();
     this.initialized = false;
@@ -31,36 +47,44 @@ class EventStore {
     await this.init();
 
     let timestamp = Date.now();
-    let filePath = path.join(this.dataDir, `${timestamp}.json`);
+    if (this.sessionTimestamp !== null && timestamp <= this.sessionTimestamp) {
+      timestamp = this.sessionTimestamp + 1;
+    }
+    let date = new Date(timestamp);
+    let filePath = this.getFilePath(date, "session");
 
-    while (true) {
-      try {
-        await fs.access(filePath);
-        timestamp += 1;
-        filePath = path.join(this.dataDir, `${timestamp}.json`);
-      } catch (error) {
-        if (error.code === "ENOENT") break;
-        throw error;
-      }
+    while (await this.pathExists(filePath)) {
+      timestamp += 1;
+      date = new Date(timestamp);
+      filePath = this.getFilePath(date, "session");
     }
 
-    this.filePath = filePath;
+    this.sessionTimestamp = timestamp;
+    this.sessionDate = formatDate(date);
     this.events = [];
     this.writeQueue = Promise.resolve();
-    await this.writeSessionFile();
 
-    return this.filePath;
+    await fs.mkdir(path.join(this.dataDir, this.sessionDate), {
+      recursive: true,
+    });
+
+    return this.getSessionPath();
   }
 
   append(event) {
     this.writeQueue = this.writeQueue.then(async () => {
-      if (!this.initialized || !this.filePath) {
+      if (!this.initialized || this.sessionTimestamp === null) {
         throw new Error("EventStore chưa có phiên lưu trữ");
       }
 
+      const eventType = normalizeEventType(event?.type);
+      const filePath = this.getFilePath(new Date(this.sessionTimestamp), eventType);
+      const line = `${JSON.stringify(event)}\n`;
+
       this.events.push(event);
       try {
-        await this.writeSessionFile();
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.appendFile(filePath, line, "utf8");
       } catch (error) {
         this.events.pop();
         throw error;
@@ -70,15 +94,31 @@ class EventStore {
     return this.writeQueue;
   }
 
-  async writeSessionFile() {
-    const tempPath = `${this.filePath}.tmp`;
-    const content = `${JSON.stringify(this.events, null, 2)}\n`;
+  getFilePath(date, eventType) {
+    const dateFolder = formatDate(date);
+    return path.join(
+      this.dataDir,
+      dateFolder,
+      normalizeEventType(eventType),
+      `${this.sessionTimestamp ?? date.getTime()}.jsonl`,
+    );
+  }
 
+  getSessionPath() {
+    return path.join(
+      this.dataDir,
+      this.sessionDate,
+      "<event-type>",
+      `${this.sessionTimestamp}.jsonl`,
+    );
+  }
+
+  async pathExists(filePath) {
     try {
-      await fs.writeFile(tempPath, content, "utf8");
-      await fs.rename(tempPath, this.filePath);
+      await fs.access(filePath);
+      return true;
     } catch (error) {
-      await fs.unlink(tempPath).catch(() => {});
+      if (error.code === "ENOENT") return false;
       throw error;
     }
   }
@@ -88,8 +128,9 @@ class EventStore {
   }
 
   resetSession() {
+    this.sessionTimestamp = null;
+    this.sessionDate = null;
     this.events = [];
-    this.filePath = null;
     this.writeQueue = Promise.resolve();
   }
 
@@ -98,4 +139,5 @@ class EventStore {
   }
 }
 
+export { normalizeEventType };
 export default EventStore;

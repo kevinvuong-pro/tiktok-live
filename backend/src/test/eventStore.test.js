@@ -25,49 +25,81 @@ afterEach(async () => {
   );
 });
 
-test("tạo file JSON theo từng phiên và khôi phục đúng dữ liệu trên đĩa", async () => {
-  const store = await createStore();
-  const filePath = await store.startSession();
-
-  assert.match(path.basename(filePath), /^\d+\.json$/);
-
-  await store.append({ id: "event-1", type: "chat" });
-  await store.flush();
-
-  assert.deepEqual(JSON.parse(await fs.readFile(filePath, "utf8")), [
-    { id: "event-1", type: "chat" },
-  ]);
-});
-
-test("mỗi phiên tạo một file JSON mới và không xóa phiên trước", async () => {
-  const store = await createStore();
-  const firstFile = await store.startSession();
-  await store.append({ id: "event-1" });
-  await store.flush();
-
-  const secondFile = await store.startSession();
-  await store.append({ id: "event-2" });
-  await store.flush();
-
-  assert.notEqual(firstFile, secondFile);
-  assert.deepEqual(JSON.parse(await fs.readFile(firstFile, "utf8")), [
-    { id: "event-1" },
-  ]);
-  assert.deepEqual(JSON.parse(await fs.readFile(secondFile, "utf8")), [
-    { id: "event-2" },
-  ]);
-});
-
-test("flush chờ toàn bộ event được ghi", async () => {
+test("phân event vào file JSONL theo ngày và type", async () => {
   const store = await createStore();
   await store.startSession();
 
-  await Promise.all(
-    Array.from({ length: 20 }, (_, index) =>
-      store.append({ id: `event-${index + 1}` }),
-    ),
-  );
+  await Promise.all([
+    store.append({ id: "event-1", type: "chat" }),
+    store.append({ id: "event-2", type: "gift" }),
+    store.append({ id: "event-3", type: "chat" }),
+  ]);
   await store.flush();
 
-  assert.equal(store.getEvents().length, 20);
+  const dateFolder = (await fs.readdir(tempDirs[0]))[0];
+  assert.match(dateFolder, /^\d{2}-\d{2}-\d{4}$/);
+
+  const sessionTimestamp = store.sessionTimestamp;
+  const chatPath = path.join(
+    tempDirs[0],
+    dateFolder,
+    "chat",
+    `${sessionTimestamp}.jsonl`,
+  );
+  const giftPath = path.join(
+    tempDirs[0],
+    dateFolder,
+    "gift",
+    `${sessionTimestamp}.jsonl`,
+  );
+
+  assert.deepEqual(
+    (await fs.readFile(chatPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line).id),
+    ["event-1", "event-3"],
+  );
+  assert.deepEqual(
+    (await fs.readFile(giftPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line).id),
+    ["event-2"],
+  );
+});
+
+test("mỗi phiên dùng timestamp riêng và giữ lại file phiên trước", async () => {
+  const store = await createStore();
+
+  await store.startSession();
+  await store.append({ id: "event-1", type: "chat" });
+  await store.flush();
+  const firstTimestamp = store.sessionTimestamp;
+
+  await store.startSession();
+  await store.append({ id: "event-2", type: "chat" });
+  await store.flush();
+
+  assert.notEqual(firstTimestamp, store.sessionTimestamp);
+  const dateFolders = await fs.readdir(tempDirs[0]);
+  const chatFiles = [];
+  for (const dateFolder of dateFolders) {
+    chatFiles.push(...(await fs.readdir(path.join(tempDirs[0], dateFolder, "chat"))));
+  }
+
+  assert.equal(chatFiles.length, 2);
+  assert.ok(chatFiles.includes(`${firstTimestamp}.jsonl`));
+  assert.ok(chatFiles.includes(`${store.sessionTimestamp}.jsonl`));
+});
+
+test("sanitize type không cho phép thoát khỏi thư mục dữ liệu", async () => {
+  const store = await createStore();
+  await store.startSession();
+  await store.append({ id: "event-1", type: "../secret/type" });
+  await store.flush();
+
+  const dateFolder = (await fs.readdir(tempDirs[0]))[0];
+  const eventFolders = await fs.readdir(path.join(tempDirs[0], dateFolder));
+  assert.deepEqual(eventFolders, ["_secret_type"]);
 });
